@@ -1,0 +1,28 @@
+# Environment
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# Airflow
+logs/
+airflow.db
+
+# Data (no subir datos reales al repo)
+data/raw/*.csv
+!data/raw/telemetry_sample.csv
+!data/raw/master_data.csv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
