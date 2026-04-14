@@ -1,0 +1,11 @@
+device_id,device_type,location,owner_id,active
+DEV-001,temperature_sensor,Warehouse-A,OWN-100,true
+DEV-002,multi_sensor,Warehouse-A,OWN-100,true
+DEV-003,vibration_sensor,Production-Line-1,OWN-101,true
+DEV-004,temperature_sensor,Warehouse-B,OWN-102,true
+DEV-005,temperature_sensor,Production-Line-2,OWN-101,true
+DEV-006,pressure_sensor,Boiler-Room,OWN-103,true
+DEV-007,multi_sensor,Production-Line-1,OWN-101,false
+DEV-008,temperature_sensor,Warehouse-B,OWN-102,true
+DEV-009,temperature_sensor,Production-Line-3,OWN-104,true
+DEV-010,pressure_sensor,Boiler-Room,OWN-103,true

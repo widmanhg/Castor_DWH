@@ -1,0 +1,86 @@
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.8.1-python3.11
+  env_file: .env
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://dwh_user:dwh_password@postgres:5432/dwh
+    AIRFLOW__CORE__FERNET_KEY: ZmDfcTF7_60GrrY167zsiPd67pEvs0aGOv2oasOM1Pg=
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__SECRET_KEY: castor_secret_key_2024
+    PYTHONPATH: /opt/airflow
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./plugins:/opt/airflow/plugins
+    - ./logs:/opt/airflow/logs
+    - ./data:/opt/airflow/data
+    - ./sql:/opt/airflow/sql
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks:
+    - castor-net
+
+services:
+  # ── PostgreSQL (DWH + Airflow metadata) ──────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: dwh
+      POSTGRES_USER: dwh_user
+      POSTGRES_PASSWORD: dwh_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "dwh_user", "-d", "dwh"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    networks:
+      - castor-net
+
+  # ── Airflow Init ──────────────────────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --username admin
+          --firstname Admin
+          --lastname Castor
+          --role Admin
+          --email admin@castor.com
+          --password admin
+      "
+    restart: on-failure
+
+  # ── Airflow Webserver ─────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # ── Airflow Scheduler ─────────────────────────────────────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  castor-net:
+    driver: bridge
