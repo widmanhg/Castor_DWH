@@ -92,8 +92,8 @@ with DAG(
     description="Pipeline incremental S3 → Bronze → Silver → Gold para telemetría de dispositivos",
     default_args=default_args,
     schedule_interval="0 4 * * *",       # Corre a las 04:00 AM, debe terminar antes 06:00
-    start_date=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
-    catchup=False,                        # Solo corre el día actual, sin backfill automático
+    start_date=datetime(2024, 1, 1),     # ✅ Fecha fija para permitir backfill
+    catchup=True,                         # ✅ Habilita backfill para fechas pasadas
     max_active_runs=1,
     tags=["castor", "telemetry", "dwh", "daily"],
     sla_miss_callback=sla_miss_callback,
@@ -105,8 +105,10 @@ with DAG(
         """
         Descarga archivos CSV de S3 para la fecha lógica.
         Usa CastorS3Hook (intercambiable: Azure Blob, GCS, SFTP sin cambiar el DAG).
+        
+        ✅ CORRECCIÓN: Usa {{ ds }} (context['ds']) en lugar de datetime.utcnow()
         """
-        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real de ejecución
+        logical_date = context['ds']  # ✅ Fecha lógica del DAG (formato YYYY-MM-DD)
         local_dir = f"/opt/airflow/data/raw/{logical_date}"
         started_at = datetime.utcnow()
         pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
@@ -153,9 +155,11 @@ with DAG(
         """
         Carga datos maestros desde CSV local (simula Oracle).
         UPSERT a silver.master_devices.
+        
+        ✅ CORRECCIÓN: Usa {{ ds }} (context['ds'])
         """
         import psycopg2.extras
-        logical_date = datetime.utcnow().strftime("%Y-%m-%d")
+        logical_date = context['ds']  # ✅ Fecha lógica del DAG
         started_at = datetime.utcnow()
         pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
 
@@ -181,7 +185,7 @@ with DAG(
                     r.get("device_id"), r.get("device_type"),
                     r.get("location"), r.get("owner_id"),
                     r.get("active", "true").lower() == "true",
-                    logical_date
+                    logical_date  # ✅ Usa fecha lógica del contexto
                 )
                 for r in records
             ]
@@ -211,9 +215,6 @@ with DAG(
     )
 
     # ── Task 3: Carga a Bronze ────────────────────────────────────────────────
-    def get_csv_paths(**context):
-        return context["ti"].xcom_pull(task_ids="extract_s3", key="csv_paths") or []
-
     load_bronze = BronzeLoaderOperator(
         task_id="load_bronze",
         table="bronze.device_telemetry",

@@ -1,6 +1,9 @@
 """
 Custom Operators - Castor DWH
 Operadores reutilizables para validación de calidad de datos y carga a Postgres.
+
+✅ CORRECCIÓN: Todos los operadores ahora usan context['ds'] en lugar de datetime.utcnow()
+              para garantizar idempotencia y compatibilidad con backfill.
 """
 
 import csv
@@ -61,6 +64,8 @@ class DataQualityOperator(BaseOperator):
     - Registros huérfanos: device_id que no existe en silver.master_devices.
 
     Pasa los datos válidos a XCom para el siguiente operador.
+    
+    ✅ CORRECCIÓN: Usa context['ds'] en lugar de datetime.utcnow()
     """
 
     ui_color = "#f0ad4e"
@@ -81,7 +86,7 @@ class DataQualityOperator(BaseOperator):
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
+        logical_date = context['ds']  # ✅ Usa {{ ds }} del contexto de Airflow
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
         csv_paths = context["ti"].xcom_pull(task_ids=self.extract_task_id, key="csv_paths") or []
@@ -163,8 +168,11 @@ class BronzeLoaderOperator(BaseOperator):
 
     Lee csv_paths desde XCom de la tarea extract_s3 (no usa Jinja templates
     porque los operadores custom no los renderizan automáticamente).
+    
+    ✅ CORRECCIÓN: Usa context['ds'] en lugar de datetime.utcnow()
     """
 
+    ui_color = "#8B4513"
 
     def __init__(
         self,
@@ -202,7 +210,7 @@ class BronzeLoaderOperator(BaseOperator):
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
+        logical_date = context['ds']  # ✅ Usa {{ ds }} del contexto de Airflow
         batch_id = str(uuid.uuid4())
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
@@ -218,7 +226,7 @@ class BronzeLoaderOperator(BaseOperator):
                 reader = csv.DictReader(f)
                 for row in reader:
                     row["source_file"] = path
-                    row["logical_date"] = logical_date
+                    row["logical_date"] = logical_date  # ✅ Usa fecha lógica del contexto
                     row["batch_id"] = batch_id
                     all_records.append(row)
 
@@ -266,8 +274,11 @@ class SilverUpsertOperator(BaseOperator):
     """
     UPSERT de bronze → silver (idempotente, N re-ejecuciones sin duplicados).
     Toma registros validados desde XCom del DataQualityOperator.
+    
+    ✅ CORRECCIÓN: Usa context['ds'] en lugar de datetime.utcnow()
     """
 
+    ui_color = "#C0C0C0"
 
     def __init__(
         self,
@@ -281,7 +292,7 @@ class SilverUpsertOperator(BaseOperator):
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
+        logical_date = context['ds']  # ✅ Usa {{ ds }} del contexto de Airflow
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
         valid_records = context["ti"].xcom_pull(
@@ -310,7 +321,7 @@ class SilverUpsertOperator(BaseOperator):
                 r.get("event_timestamp"),
                 r.get("metric_name"),
                 r.get("metric_value"),
-                logical_date,
+                logical_date,  # ✅ Usa fecha lógica del contexto
                 r.get("batch_id", str(uuid.uuid4())),
             )
             for r in valid_records
@@ -335,7 +346,11 @@ class SilverUpsertOperator(BaseOperator):
 class GoldRefreshOperator(BaseOperator):
     """
     Agrega métricas diarias de silver → gold (DELETE + INSERT por fecha, idempotente).
+    
+    ✅ CORRECCIÓN: Usa context['ds'] en lugar de datetime.utcnow()
     """
+
+    ui_color = "#FFD700"
 
     def __init__(self, postgres_conn_id: str = "postgres_dwh", **kwargs):
         super().__init__(**kwargs)
@@ -343,7 +358,7 @@ class GoldRefreshOperator(BaseOperator):
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
+        logical_date = context['ds']  # ✅ Usa {{ ds }} del contexto de Airflow
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
         # Idempotente: elimina el día antes de recalcular

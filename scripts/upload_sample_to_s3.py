@@ -58,7 +58,7 @@ def upload_sample(dates: list[str], dry_run: bool = False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sube datos de ejemplo a S3")
-    parser.add_argument("--date", action="append", default=["2026-04-16"],
+    parser.add_argument("--date", action="append", default=["2024-03-03"],
                         help="Fecha(s) a subir (YYYY-MM-DD). Repetir para múltiples fechas.")
     parser.add_argument("--dry-run", action="store_true", help="Solo muestra qué subiría")
     args = parser.parse_args()

@@ -1,0 +1,24 @@
+device_id,event_timestamp,metric_name,metric_value,unit
+DEV-001,2024-01-15 00:05:00,temperature,23.4,celsius
+DEV-001,2024-01-15 00:10:00,temperature,23.6,celsius
+DEV-001,2024-01-15 00:05:00,humidity,65.2,percent
+DEV-001,2024-01-15 00:10:00,humidity,64.8,percent
+DEV-002,2024-01-15 00:05:00,temperature,21.1,celsius
+DEV-002,2024-01-15 00:10:00,temperature,21.3,celsius
+DEV-002,2024-01-15 00:05:00,pressure,1013.2,hpa
+DEV-003,2024-01-15 00:05:00,temperature,25.0,celsius
+DEV-003,2024-01-15 00:10:00,temperature,25.2,celsius
+DEV-003,2024-01-15 00:05:00,vibration,0.02,g
+DEV-004,2024-01-15 00:05:00,temperature,19.8,celsius
+DEV-004,2024-01-15 00:10:00,humidity,70.1,percent
+DEV-005,2024-01-15 00:05:00,temperature,22.5,celsius
+DEV-005,2024-01-15 00:10:00,temperature,22.7,celsius
+DEV-006,2024-01-15 00:05:00,pressure,1015.0,hpa
+DEV-006,2024-01-15 00:10:00,pressure,1014.8,hpa
+DEV-007,2024-01-15 00:05:00,temperature,20.3,celsius
+DEV-007,2024-01-15 00:10:00,vibration,0.01,g
+DEV-008,2024-01-15 00:05:00,temperature,24.1,celsius
+DEV-008,2024-01-15 00:10:00,humidity,58.3,percent
+DEV-009,2024-01-15 00:05:00,temperature,26.7,celsius
+DEV-009,2024-01-15 00:10:00,temperature,26.9,celsius
+DEV-010,2024-01-15 00:05:00,pressure,1012.5,hpa
