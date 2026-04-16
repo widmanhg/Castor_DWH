@@ -92,8 +92,8 @@ with DAG(
     description="Pipeline incremental S3 → Bronze → Silver → Gold para telemetría de dispositivos",
     default_args=default_args,
     schedule_interval="0 4 * * *",       # Corre a las 04:00 AM, debe terminar antes 06:00
-    start_date=datetime(2024, 1, 1),
-    catchup=True,                         # Permite backfill
+    start_date=datetime.now().replace(hour=0, minute=0, second=0, microsecond=0),
+    catchup=False,                        # Solo corre el día actual, sin backfill automático
     max_active_runs=1,
     tags=["castor", "telemetry", "dwh", "daily"],
     sla_miss_callback=sla_miss_callback,
@@ -106,7 +106,7 @@ with DAG(
         Descarga archivos CSV de S3 para la fecha lógica.
         Usa CastorS3Hook (intercambiable: Azure Blob, GCS, SFTP sin cambiar el DAG).
         """
-        logical_date = context["ds"]
+        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real de ejecución
         local_dir = f"/opt/airflow/data/raw/{logical_date}"
         started_at = datetime.utcnow()
         pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
@@ -121,17 +121,13 @@ with DAG(
             )
 
             if not local_paths:
-                logger.warning(f"No se encontraron archivos en S3 para {logical_date}. "
-                               "Usando datos de ejemplo locales.")
-                # Fallback a datos locales de ejemplo (útil en desarrollo)
-                example_path = f"/opt/airflow/data/raw/telemetry_sample.csv"
-                if os.path.exists(example_path):
-                    import shutil
-                    os.makedirs(local_dir, exist_ok=True)
-                    dest = os.path.join(local_dir, "telemetry_sample.csv")
-                    shutil.copy(example_path, dest)
-                    local_paths = [dest]
+                raise FileNotFoundError(
+                    f"No se encontraron archivos CSV en "
+                    f"s3://{S3_BUCKET}/{S3_PREFIX}{logical_date}/. "
+                    f"Verifica que el archivo exista en S3 para esta fecha."
+                )
 
+            logger.info(f"[S3] {len(local_paths)} archivo(s) descargados para {logical_date}")
             context["ti"].xcom_push(key="csv_paths", value=local_paths)
             log_pipeline_run(
                 pg_hook, dag.dag_id, "extract_s3", logical_date,
@@ -159,7 +155,7 @@ with DAG(
         UPSERT a silver.master_devices.
         """
         import psycopg2.extras
-        logical_date = context["ds"]
+        logical_date = datetime.utcnow().strftime("%Y-%m-%d")
         started_at = datetime.utcnow()
         pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
 
@@ -221,7 +217,7 @@ with DAG(
     load_bronze = BronzeLoaderOperator(
         task_id="load_bronze",
         table="bronze.device_telemetry",
-        csv_paths="{{ ti.xcom_pull(task_ids='extract_s3', key='csv_paths') or [] }}",
+        extract_task_id="extract_s3",
         logical_date_col="logical_date",
         postgres_conn_id=POSTGRES_CONN_ID,
         sla=timedelta(hours=1),
@@ -230,7 +226,7 @@ with DAG(
     # ── Task 4: Validación de calidad (DQ) ───────────────────────────────────
     validate_dq = DataQualityOperator(
         task_id="validate_dq",
-        csv_paths="{{ ti.xcom_pull(task_ids='extract_s3', key='csv_paths') or [] }}",
+        extract_task_id="extract_s3",
         critical_columns=CRITICAL_COLUMNS,
         null_threshold=NULL_THRESHOLD,
         postgres_conn_id=POSTGRES_CONN_ID,

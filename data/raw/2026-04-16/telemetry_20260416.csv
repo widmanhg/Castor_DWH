@@ -22,3 +22,4 @@ DEV-008,2024-01-15 00:10:00,humidity,58.3,percent
 DEV-009,2024-01-15 00:05:00,temperature,26.7,celsius
 DEV-009,2024-01-15 00:10:00,temperature,26.9,celsius
 DEV-010,2024-01-15 00:05:00,pressure,1012.5,hpa
+DEV-010,2024-01-15 00:05:00,pressure,1012.5,hpa

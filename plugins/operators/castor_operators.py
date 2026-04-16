@@ -67,25 +67,26 @@ class DataQualityOperator(BaseOperator):
 
     def __init__(
         self,
-        csv_paths: list[str],
         critical_columns: list[str],
+        extract_task_id: str = "extract_s3",
         null_threshold: float = 0.05,
         postgres_conn_id: str = "postgres_dwh",
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.csv_paths = csv_paths
+        self.extract_task_id = extract_task_id
         self.critical_columns = critical_columns
         self.null_threshold = null_threshold
         self.postgres_conn_id = postgres_conn_id
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = str(context["ds"])
+        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
+        csv_paths = context["ti"].xcom_pull(task_ids=self.extract_task_id, key="csv_paths") or []
         all_records = []
-        for path in self.csv_paths:
+        for path in csv_paths:
             with open(path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
@@ -159,21 +160,23 @@ class BronzeLoaderOperator(BaseOperator):
     """
     Carga datos crudos a bronze con UPSERT (idempotente).
     Soporta evolución de esquema: columnas nuevas se agregan automáticamente.
+
+    Lee csv_paths desde XCom de la tarea extract_s3 (no usa Jinja templates
+    porque los operadores custom no los renderizan automáticamente).
     """
 
-    ui_color = "#cd7f32"
 
     def __init__(
         self,
         table: str,
-        csv_paths: list[str],
+        extract_task_id: str = "extract_s3",
         logical_date_col: str = "logical_date",
         postgres_conn_id: str = "postgres_dwh",
         **kwargs,
     ):
         super().__init__(**kwargs)
         self.table = table
-        self.csv_paths = csv_paths
+        self.extract_task_id = extract_task_id
         self.logical_date_col = logical_date_col
         self.postgres_conn_id = postgres_conn_id
 
@@ -199,12 +202,18 @@ class BronzeLoaderOperator(BaseOperator):
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = str(context["ds"])
+        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
         batch_id = str(uuid.uuid4())
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
+        # Leer paths desde XCom (evita problema de Jinja templates en operadores custom)
+        csv_paths = context["ti"].xcom_pull(task_ids=self.extract_task_id, key="csv_paths") or []
+        if not csv_paths:
+            logger.info("[BRONZE] No hay archivos para procesar.")
+            return 0
+
         all_records = []
-        for path in self.csv_paths:
+        for path in csv_paths:
             with open(path, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
                 for row in reader:
@@ -259,7 +268,6 @@ class SilverUpsertOperator(BaseOperator):
     Toma registros validados desde XCom del DataQualityOperator.
     """
 
-    ui_color = "#c0c0c0"
 
     def __init__(
         self,
@@ -273,7 +281,7 @@ class SilverUpsertOperator(BaseOperator):
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = str(context["ds"])
+        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
         valid_records = context["ti"].xcom_pull(
@@ -329,15 +337,13 @@ class GoldRefreshOperator(BaseOperator):
     Agrega métricas diarias de silver → gold (DELETE + INSERT por fecha, idempotente).
     """
 
-    ui_color = "#ffd700"
-
     def __init__(self, postgres_conn_id: str = "postgres_dwh", **kwargs):
         super().__init__(**kwargs)
         self.postgres_conn_id = postgres_conn_id
 
     def execute(self, context):
         started_at = datetime.utcnow()
-        logical_date = str(context["ds"])
+        logical_date = datetime.utcnow().strftime("%Y-%m-%d")  # Fecha real del día
         pg_hook = PostgresHook(postgres_conn_id=self.postgres_conn_id)
 
         # Idempotente: elimina el día antes de recalcular
