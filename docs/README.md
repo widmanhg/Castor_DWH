@@ -55,11 +55,10 @@ castor-dwh/
 │       ├── telemetry_sample.csv         # Datos de telemetría de ejemplo
 │       └── master_data.csv              # Datos maestros (simulación de Oracle)
 ├── docs/
-│   └── architecture.md                 # Diagrama de arquitectura en Mermaid
+│   └── mermaid.md, guia tecnica.md y readme.md           
 ├── scripts/
 │   ├── upload_sample_to_s3.py          # Sube datos de ejemplo al bucket S3
 │   ├── setup_airflow_connections.sh    # Registra la conexión postgres_dwh en Airflow
-│   └── reset_dwh.sql                   # Limpia todas las tablas (útil en desarrollo)
 ├── .env                                 # Variables de entorno (completar antes de iniciar)
 ├── docker-compose.yml
 └── requirements.txt
