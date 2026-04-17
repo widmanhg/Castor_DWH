@@ -1,18 +1,4 @@
-"""
-DAG: castor_device_telemetry_pipeline
-======================================
-Pipeline principal de telemetría de dispositivos.
-
-Flujo:
-  S3 (bronze) → DQ Validation → Silver (UPSERT) → Gold (Aggregation)
-
-Características:
-  - Idempotente: re-ejecuciones para la misma fecha no duplican datos
-  - Backfill compatible: usa {{ ds }} como partición lógica
-  - Observabilidad: cada tarea registra métricas en observability.pipeline_runs
-  - DQ: falla explícitamente si > 5% de nulos en columnas críticas
-  - Schema evolution: columnas nuevas en S3 se agregan automáticamente
-  - SLA: alerta si el pipeline no termina antes de las 06:00 AM
+"""DAG: castor_device_telemetry_pipeline
 """
 
 import os
@@ -92,8 +78,8 @@ with DAG(
     description="Pipeline incremental S3 → Bronze → Silver → Gold para telemetría de dispositivos",
     default_args=default_args,
     schedule_interval="0 4 * * *",       # Corre a las 04:00 AM, debe terminar antes 06:00
-    start_date=datetime(2024, 1, 1),     # ✅ Fecha fija para permitir backfill
-    catchup=True,                         # ✅ Habilita backfill para fechas pasadas
+    start_date=datetime(2026, 4, 1),     #  Fecha fija para permitir backfill
+    catchup=True,                         #  Habilita backfill para fechas pasadas
     max_active_runs=1,
     tags=["castor", "telemetry", "dwh", "daily"],
     sla_miss_callback=sla_miss_callback,
@@ -156,10 +142,10 @@ with DAG(
         Carga datos maestros desde CSV local (simula Oracle).
         UPSERT a silver.master_devices.
         
-        ✅ CORRECCIÓN: Usa {{ ds }} (context['ds'])
+    
         """
         import psycopg2.extras
-        logical_date = context['ds']  # ✅ Fecha lógica del DAG
+        logical_date = context['ds']  #
         started_at = datetime.utcnow()
         pg_hook = PostgresHook(postgres_conn_id=POSTGRES_CONN_ID)
 

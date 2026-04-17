@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
 """
-Script de setup: sube datos de ejemplo a S3 para que el pipeline los encuentre.
-Ejecutar UNA VEZ después de configurar las credenciales AWS en el .env
-
-Uso:
-    python scripts/upload_sample_to_s3.py --date 2024-01-15
-    python scripts/upload_sample_to_s3.py --date 2024-01-15 --date 2024-01-16
+Script de setup: sube datos de ejemplo a S3 para un rango de fechas.
 """
 
 import argparse
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import boto3
 from pathlib import Path
 
-# Cargar .env manualmente si no está en el entorno
 try:
     from dotenv import load_dotenv
     load_dotenv(Path(__file__).parent.parent / ".env")
 except ImportError:
     pass
+
+
+def generate_date_range(start_date: str, end_date: str) -> list[str]:
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+
+    if start > end:
+        raise ValueError("start_date no puede ser mayor que end_date")
+
+    dates = []
+    current = start
+
+    while current <= end:
+        dates.append(current.strftime("%Y-%m-%d"))
+        current += timedelta(days=1)
+
+    return dates
 
 
 def upload_sample(dates: list[str], dry_run: bool = False):
@@ -45,21 +56,25 @@ def upload_sample(dates: list[str], dry_run: bool = False):
 
     for date in dates:
         key = f"{prefix}/{date}/telemetry_{date.replace('-', '')}.csv"
+
         if dry_run:
-            print(f"[DRY RUN] Subiría: s3://{bucket}/{key}")
+            print(f"[DRY RUN] s3://{bucket}/{key}")
             continue
 
-        print(f"Subiendo → s3://{bucket}/{key} ... ", end="")
+        print(f"Subiendo → s3://{bucket}/{key}")
         client.upload_file(str(sample_path), bucket, key)
-        print("✅")
 
-    print(f"\nListo. Datos disponibles en s3://{bucket}/{prefix}/")
+    print("Listo.")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sube datos de ejemplo a S3")
-    parser.add_argument("--date", action="append", default=["2024-03-03"],
-                        help="Fecha(s) a subir (YYYY-MM-DD). Repetir para múltiples fechas.")
-    parser.add_argument("--dry-run", action="store_true", help="Solo muestra qué subiría")
+
+    parser.add_argument("--start-date", required=True, help="Fecha inicio YYYY-MM-DD")
+    parser.add_argument("--end-date", required=True, help="Fecha fin YYYY-MM-DD")
+    parser.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args()
-    upload_sample(args.date, args.dry_run)
+
+    dates = generate_date_range(args.start_date, args.end_date)
+    upload_sample(dates, args.dry_run)

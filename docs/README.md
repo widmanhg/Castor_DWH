@@ -14,7 +14,7 @@ Oracle (Maestros CSV) ──┘
 
 | Capa | Esquema | Descripción |
 |------|---------|-------------|
-| Bronze | `bronze.*` | Datos crudos tal como llegan de S3, particionados por fecha de ejecución |
+| Bronze | `bronze.*` | Datos crudos tal como llegan de S3, particionados por `context["ds"]` de Airflow |
 | Silver | `silver.*` | Datos limpios y normalizados, cargados con UPSERT idempotente |
 | Gold | `gold.*` | Agregados de negocio diarios, listos para consumo en Power BI |
 | Observabilidad | `observability.*` | Registro de cada ejecución: inicio, fin, filas procesadas y rechazadas |
@@ -101,11 +101,11 @@ El pipeline espera encontrar archivos en S3 bajo la estructura `s3://BUCKET/tele
 ```bash
 pip install boto3 python-dotenv
 
-# Subir datos para la fecha de hoy
-python scripts/upload_sample_to_s3.py --date $(date +%Y-%m-%d)
+# Subir datos para la fecha que se va a ejecutar
+python scripts/upload_sample_to_s3.py --date 2024-01-05
 
 # Ver que subiria sin ejecutar
-python scripts/upload_sample_to_s3.py --date $(date +%Y-%m-%d) --dry-run
+python scripts/upload_sample_to_s3.py --date 2024-01-05 --dry-run
 ```
 
 ### 3. Levantar la infraestructura
@@ -127,14 +127,26 @@ castor-dwh-airflow-webserver-1    running (healthy)
 castor-dwh-airflow-scheduler-1    running
 ```
 
-### 4. Registrar la conexión a PostgreSQL en Airflow
+### 4. Crear usuario administrador de Airflow
+
+```bash
+docker exec -it castor-dwh-airflow-scheduler-1 airflow users create \
+  --username admin \
+  --firstname admin \
+  --lastname admin \
+  --role Admin \
+  --email admin@admin.com \
+  --password admin
+```
+
+### 5. Registrar la conexión a PostgreSQL en Airflow
 
 ```bash
 chmod +x scripts/setup_airflow_connections.sh
 ./scripts/setup_airflow_connections.sh
 ```
 
-### 5. Acceder a la interfaz de Airflow
+### 6. Acceder a la interfaz de Airflow
 
 ```
 URL:      http://localhost:8080
@@ -142,48 +154,89 @@ Usuario:  admin
 Password: admin
 ```
 
-### 6. Ejecutar el DAG
+### 7. Ejecutar el DAG
 
-Desde la UI: activar el toggle del DAG `castor_device_telemetry_pipeline` y usar el botón Trigger DAG.
-
-Desde terminal:
+Trigger manual para una fecha especifica:
 
 ```bash
 docker exec castor-dwh-airflow-scheduler-1 \
-  airflow dags trigger castor_device_telemetry_pipeline
+  airflow dags trigger castor_device_telemetry_pipeline \
+  -e 2024-01-05T04:00:00
 ```
 
-### 7. Verificar los datos en PostgreSQL
+Backfill de un dia especifico:
+
+```bash
+docker exec castor-dwh-airflow-scheduler-1 \
+  airflow dags backfill castor_device_telemetry_pipeline \
+  --start-date 2024-01-05T04:00:00 \
+  --end-date 2024-01-05T04:00:00
+```
+
+Probar idempotencia (ejecuta el DAG sin registrar en el metastore, util para validar re-ejecuciones):
+
+```bash
+docker exec castor-dwh-airflow-scheduler-1 \
+  airflow dags test castor_device_telemetry_pipeline 2024-01-05T04:00:00
+```
+
+### 8. Verificar los datos en PostgreSQL
 
 ```bash
 docker exec -it castor-dwh-postgres-1 psql -U dwh_user -d dwh
 ```
 
-```sql
--- Conteo por capa
-SELECT COUNT(*) FROM bronze.device_telemetry;
-SELECT COUNT(*) FROM silver.device_telemetry;
-SELECT COUNT(*) FROM gold.daily_device_metrics;
+Registros en Bronze por fecha de particion:
 
--- Agregados de negocio (capa Gold)
+```sql
+SELECT logical_date, COUNT(*) AS total_registros
+FROM bronze.device_telemetry
+GROUP BY logical_date
+ORDER BY logical_date DESC;
+```
+
+Comparacion Bronze vs Silver (diferencia = filas rechazadas por DQ):
+
+```sql
+SELECT 'bronze' AS capa, COUNT(*) AS registros
+FROM bronze.device_telemetry
+UNION ALL
+SELECT 'silver', COUNT(*)
+FROM silver.device_telemetry;
+```
+
+Agregados de negocio en Gold (listos para Power BI):
+
+```sql
 SELECT device_id, metric_name, report_date,
        ROUND(avg_value::numeric, 2) AS promedio,
-       reading_count
+       ROUND(max_value::numeric, 2) AS maximo,
+       ROUND(min_value::numeric, 2) AS minimo,
+       reading_count                AS lecturas,
+       device_type, location
 FROM gold.daily_device_metrics
-ORDER BY report_date DESC;
+ORDER BY report_date DESC, device_id;
+```
 
--- Log de observabilidad
+Log de observabilidad con ultimas 3 ejecuciones:
+
+```sql
 SELECT dag_id, task_id, logical_date, status,
        rows_processed, rows_rejected,
-       ROUND(duration_seconds::numeric, 1) AS segundos
+       duration_seconds, started_at, finished_at,
+       error_message
 FROM observability.pipeline_runs
 ORDER BY started_at DESC
-LIMIT 20;
+LIMIT 3;
 ```
 
 ---
 
 ## Caracteristicas Tecnicas
+
+### Particion Logica con context["ds"]
+
+Todos los operadores usan `context["ds"]` de Airflow como fecha logica de particion. Esto significa que la fecha que se usa para particionar los datos en Bronze, Silver y Gold es la fecha de ejecucion del DAG definida por Airflow, no la fecha del sistema. Este patron permite ejecutar el pipeline para cualquier fecha historica (backfill) y garantiza que los datos queden correctamente particionados por la fecha logica del run, no por cuando fisicamente corrio la maquina.
 
 ### Idempotencia
 
@@ -191,13 +244,15 @@ El pipeline puede ejecutarse N veces para la misma fecha sin duplicar registros.
 
 | Capa | Estrategia |
 |------|-----------|
-| Bronze | `DELETE WHERE logical_date = fecha` seguido de INSERT bulk |
+| Bronze | `DELETE WHERE logical_date = ds` seguido de INSERT bulk |
 | Silver | `INSERT ... ON CONFLICT (device_id, event_timestamp, metric_name) DO UPDATE` |
-| Gold | `DELETE WHERE report_date = fecha` seguido de INSERT con agregacion |
+| Gold | `DELETE WHERE report_date = ds` seguido de INSERT con agregacion |
+
+Para verificar idempotencia, ejecutar `airflow dags test` dos veces con la misma fecha y confirmar que el COUNT en cada tabla no cambia entre ejecuciones.
 
 ### Data Quality
 
-`DataQualityOperator` valida los datos antes de permitir la carga a Silver. El pipeline falla explicitamente si mas del 5% de los registros tienen nulos en columnas criticas (`device_id`, `event_timestamp`, `metric_name`). Tambien detecta y rechaza registros huerfanos (device_id que no existe en los datos maestros). Las filas rechazadas quedan registradas en `observability.pipeline_runs`.
+`DataQualityOperator` valida los datos antes de permitir la carga a Silver. El pipeline falla explicitamente si mas del 5% de los registros tienen nulos en columnas criticas (`device_id`, `event_timestamp`, `metric_name`). Tambien detecta y rechaza registros huerfanos, es decir, device_id que no existe en los datos maestros. Las filas rechazadas quedan registradas en `observability.pipeline_runs`.
 
 El umbral del 5% es configurable via la variable de entorno `DQ_NULL_THRESHOLD`.
 
@@ -221,6 +276,10 @@ Cada tarea registra una fila en `observability.pipeline_runs` con los siguientes
 
 ## Decisiones de Diseno
 
+**Particion por context["ds"] en lugar de datetime.utcnow()**
+
+Los operadores usan `context["ds"]` de Airflow como fecha logica de particion. Esto es fundamental para que el backfill funcione correctamente: si se usa `datetime.utcnow()`, todos los backfills historicos se escribirian con la fecha de hoy, rompiendo la particion. Con `context["ds"]` cada run usa su propia fecha logica sin importar cuando se ejecute fisicamente.
+
 **Truncate-Load en Bronze, UPSERT en Silver**
 
 Bronze es la zona de aterrizaje cruda. Re-procesar la misma fecha con DELETE + INSERT es la operacion mas simple y predecible. Silver ya tiene una llave primaria compuesta, por lo que ON CONFLICT DO UPDATE es mas eficiente y preciso que un truncate.
@@ -232,10 +291,6 @@ La prueba evalua el patron arquitectonico, no el acceso a infraestructura enterp
 **XCom para transferir registros entre DQ y Silver**
 
 Para los volumenes de esta prueba (hasta 50K registros por batch diario) XCom es suficiente. En produccion con 50M registros mensuales, `DataQualityOperator` escribiria los registros validados a una tabla temporal en Postgres en lugar de XCom, para evitar el limite de tamano del metastore.
-
-**Fecha logica basada en datetime.utcnow()**
-
-Los operadores usan la fecha real de ejecucion en lugar de `context["ds"]` de Airflow. Esto garantiza que el pipeline siempre procesa el archivo del dia en que se corre, independientemente del schedule interno de Airflow.
 
 ---
 
